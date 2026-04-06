@@ -5,14 +5,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ep-audio-monitor"
 version = "0.1.0"
-description = "Local prototype: procedural audio → transcript → workflow delay flags (course project)."
+description = "Local prototype for EP lab procedural audio workflow monitoring (course project)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pandas",
+    "numpy",
     "pydub",
+    "librosa",
     "faster-whisper",
     "openpyxl",
+    "scikit-learn",
 ]
 
 [tool.setuptools.packages.find]

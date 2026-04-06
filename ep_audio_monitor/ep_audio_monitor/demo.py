@@ -1,4 +1,4 @@
-"""Run classifier on sample transcript segments without audio transcription."""
+"""Run classifier on bundled transcript CSV (no audio)."""
 
 from __future__ import annotations
 
@@ -8,27 +8,19 @@ import pandas as pd
 
 from .classify import classify_segments
 from .config import AppConfig
-from .export import to_dataframes
+from .export import build_event_log_dataframe, export_event_log
 
 
-def run_demo(output_dir: str = "outputs_demo", case_id: str = "DEMO001") -> None:
+def run_demo(output_dir: str = "outputs_demo") -> None:
     cfg = AppConfig()
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-
     demo_csv = Path(__file__).parent / "sample_data" / "demo_segments.csv"
-    df = pd.read_csv(demo_csv)
-    segments = df.to_dict(orient="records")
-
+    segments = pd.read_csv(demo_csv).to_dict(orient="records")
     classified = classify_segments(segments, cfg.classifier, cfg.phase)
-    events_df, all_df = to_dataframes(classified, case_id=case_id, source_audio_file="demo_segments.csv")
-
-    events_df.to_csv(out / "events.csv", index=False)
-    all_df.to_csv(out / "all_segments.csv", index=False)
-    with pd.ExcelWriter(out / "events_review.xlsx", engine="openpyxl") as writer:
-        events_df.to_excel(writer, index=False, sheet_name="FlaggedEvents")
-
-    print(f"Demo complete. Outputs written to: {out.resolve()}")
+    log_df = build_event_log_dataframe(classified)
+    export_event_log(log_df, out / "events.csv", out / "events_review.xlsx", sheet_name=cfg.event_log_sheet_name)
+    print(f"Demo complete: {out.resolve()}")
 
 
 if __name__ == "__main__":

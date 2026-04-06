@@ -70,10 +70,9 @@ def main() -> None:
         config=config,
     )
 
-    print("\nRun complete. Generated artifacts:")
-    for key, value in outputs.items():
-        if str(value):
-            print(f"- {key}: {value}")
+    print("\nRun complete:")
+    for key, path in outputs.items():
+        print(f"  {key}: {path}")
 
 
 if __name__ == "__main__":

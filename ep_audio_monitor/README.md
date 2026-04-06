@@ -1,345 +1,74 @@
 # ep_audio_monitor
 
-`ep_audio_monitor` is a local Python prototype for course work on **AFib ablation workflow monitoring** in the EP lab.  
-It analyzes procedural audio to detect and classify **operational workflow delays and inefficiencies**.
+Course **proof-of-concept**: procedural audio → transcript → **AI Event Log** (CSV + Excel).
 
-This project is designed to mirror a slide-based concept:  
-**Input Audio File -> transcript evidence -> workflow event classification -> timestamped event table for review**.
+**Not** clinical decision support, diagnosis, or physician/team evaluation. Workflow analysis only.
 
 ---
 
-## Important Scope and Safety Statement
+## Event log format
 
-This prototype is intentionally limited in scope:
+Exports use these columns **in order** (all transcript segments, chronological):
 
-- It is a **workflow measurement and analysis prototype**.
-- It is **not** a medical diagnosis tool.
-- It is **not** a clinical decision-making system.
-- It does **not** assess physician quality or performance.
-- It does **not** attempt full clinical interpretation of the procedure.
+| Column | Notes |
+|--------|--------|
+| Start Time | Segment start (seconds) |
+| End Time | Segment end (seconds) |
+| Duration (s) | Segment length |
+| Procedure Phase | Heuristic phase (e.g. Positioning, Confirmation); `Unknown` if unclear |
+| Delay Category | One of the four delay types, or **`-`** for routine / no delay |
+| Description | Short review-friendly phrase |
+| Confidence | Heuristic score (not calibrated probability) |
 
-Its purpose is only to detect possible operational workflow events from procedural audio, for human review.
+**Delay categories (flagged rows only):**  
+Positioning/Coordination · Communication Delay · Equipment/Tool Delay · Non-Routine Complexity  
 
----
-
-## Delay Taxonomy (Slide-Aligned)
-
-The classifier uses exactly four display categories:
-
-1. **Positioning/Coordination**
-   - prolonged catheter repositioning between applications
-   - multiple adjustments before achieving position
-   - waiting for physical access, crowding, or tool access
-   - inefficient sequencing of movements
-
-2. **Communication Delay**
-   - repeated or corrected instructions
-   - clarifications or misheard commands
-   - delayed response to instructions
-
-3. **Equipment/Tool Delay**
-   - missing or incorrect tools
-   - setup or calibration delays
-   - tool handling issues or replacements
-
-4. **Non-Routine Complexity**
-   - additional mapping due to anatomy
-   - unexpected procedural adjustments
-   - extra verification or complication handling
-
-Internal non-display label:
-
-5. **routine_none**
-   - used when evidence is insufficient for the four delay categories
-   - prevents forced over-classification
+**Internal label** `routine_none` is still used in code; in the event log it appears as **Delay Category = `-`**.
 
 ---
 
-## Architecture Overview
+## Workflow
 
-Package modules:
-
-- `config.py` - editable rules, thresholds, labels, phase cues
-- `preprocess.py` - audio normalization to mono WAV (fixed sample rate)
-- `transcribe.py` - timestamped transcription (`faster-whisper`)
-- `segment.py` - segment unit preparation (v1: transcript segments as-is)
-- `classify.py` - conservative rule-based classification + phase inference
-- `pipeline.py` - end-to-end orchestration
-- `export.py` - CSV/Excel exports for reviewer workflow
-- `cli.py` - command-line interface
+1. Preprocess → mono WAV  
+2. Transcribe (`faster-whisper`) → `transcript_segments.json`  
+3. Segment (one row per transcript segment)  
+4. Classify (rule-based dictionaries in `config.py`)  
+5. Export `events.csv` + `events_review.xlsx` (sheet **AI Event Log**)
 
 ---
 
-## End-to-End Workflow
-
-1. **Input audio** (e.g., WAV/MP3/M4A)
-2. **Preprocess** to standardized mono WAV (`16 kHz` default)
-3. **Transcribe** into timestamped transcript segments
-4. **Segment** using transcript segments as analysis units
-5. **Classify** each segment with interpretable rules
-6. **Export**
-   - flagged events table (`events.csv`, `events_review.xlsx`)
-   - full segment view (`all_segments.csv`)
-   - transcript artifact (`transcript_segments.json`)
-
----
-
-## Project Tree
-
-```text
-ep_audio_monitor/
-├─ ep_audio_monitor/
-│  ├─ __init__.py
-│  ├─ __main__.py
-│  ├─ cli.py
-│  ├─ classify.py
-│  ├─ config.py
-│  ├─ demo.py
-│  ├─ export.py
-│  ├─ pipeline.py
-│  ├─ preprocess.py
-│  ├─ segment.py
-│  ├─ transcribe.py
-│  └─ sample_data/
-│     ├─ demo_segments.csv
-│     └─ sample_silence_2s.wav
-├─ requirements.txt
-├─ pyproject.toml
-└─ README.md
-```
-
----
-
-## Environment and System Requirements
-
-- Python `3.10+`
-- `ffmpeg` available on system path (required by audio loaders)
-- Sufficient CPU/RAM for `faster-whisper` model execution
-
-Python dependencies (in `requirements.txt`):
-
-- `pandas`
-- `numpy`
-- `pydub`
-- `librosa`
-- `faster-whisper`
-- `openpyxl`
-- `scikit-learn` (included for future expansion; not required in current rules)
-
----
-
-## Installation
-
-**Project root** is the folder that contains this `README.md`, `requirements.txt`, and the inner Python package folder `ep_audio_monitor/` (the one with `__init__.py`). On disk it looks like:
-
-`.../Module 4 Code/ep_audio_monitor/` — use **this** directory, not the parent `Module 4 Code/` folder.
-
-From that project root:
+## Setup
 
 ```bash
 cd /path/to/ep_audio_monitor
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
+python -m venv .venv && source .venv/bin/activate
+pip install -U pip && pip install -r requirements.txt && pip install -e .
 ```
 
-The editable install (`pip install -e .`) registers the package so `python -m ep_audio_monitor` works from any current working directory. If you skip it, you must run the CLI **from this project root** so Python can import the inner `ep_audio_monitor` package.
-
-### ffmpeg Installation Help
-
-macOS (Homebrew):
-
-```bash
-brew install ffmpeg
-```
-
-Ubuntu/Debian:
-
-```bash
-sudo apt update && sudo apt install -y ffmpeg
-```
-
-Windows (Chocolatey):
-
-```powershell
-choco install ffmpeg
-```
+Install **ffmpeg** for non-WAV inputs if needed.
 
 ---
 
-## CLI Usage
-
-Run as a module **from the project root** (see Installation), or after `pip install -e .`:
+## Run
 
 ```bash
-cd /path/to/ep_audio_monitor
-python -m ep_audio_monitor --audio path/to/your_recording.wav --case-id CASE001 --output-dir outputs/
-```
-
-Replace the audio path with a **real** file on your machine. Strings like `/path/to/your.wav` or `path/to/file.wav` in docs are **examples only**—they are not real files.
-
-Quick smoke test (from project root, after venv + `pip install -e .`):
-
-```bash
-python -m ep_audio_monitor --audio sample_data/sample_silence_2s.wav --case-id DEMO --output-dir outputs/
-```
-
-Optional flags:
-
-- `--log-level INFO|DEBUG|WARNING`
-- `--whisper-model tiny|base|small|medium|large-v3`
-- `--language en`
-
-Example:
-
-```bash
-python -m ep_audio_monitor \
-  --audio data/case001_audio.wav \
-  --case-id CASE001 \
-  --output-dir outputs/case001 \
-  --whisper-model small \
-  --language en
-```
-
----
-
-## Output Files
-
-Main outputs in `--output-dir`:
-
-- `normalized_audio.wav` - standardized audio used for transcription
-- `transcript_segments.json` - timestamped transcript segments artifact
-- `events.csv` - flagged event log (excludes `routine_none`)
-- `events_review.xlsx` - nurse-review friendly Excel of flagged events
-- `all_segments.csv` - optional full list including `routine_none`
-- `run.log` - pipeline logs
-
----
-
-## Event Table Schema (Screenshot-Aligned Concept)
-
-Flagged event table columns:
-
-- `start_time`
-- `end_time`
-- `duration_sec`
-- `procedure_phase`
-- `delay_category`
-- `description`
-- `confidence`
-- `transcript`
-- `case_id`
-- `source_audio_file`
-- `verified_label`
-- `review_notes`
-
-Display categories in exports match slide language:
-
-- `Positioning/Coordination`
-- `Communication Delay`
-- `Equipment/Tool Delay`
-- `Non-Routine Complexity`
-
-The internal `routine_none` label is used in code and full-segment outputs, but excluded from the main flagged events table.
-
----
-
-## Classification Logic (Interpretable and Conservative)
-
-The prototype uses a rule-based classifier with editable dictionaries in `config.py`.
-
-For each segment:
-
-1. Normalize text
-2. Score each category from:
-   - phrase matches (higher weight)
-   - keyword matches
-   - weak keyword matches
-3. Apply conservative gating:
-   - minimum score threshold
-   - margin over second-best category
-   - minimum evidence strength
-4. If criteria fail, assign `routine_none`
-
-Design intent:
-
-- prefer false negatives over false positives
-- avoid classifying every mention of tools/mapping/movement as delays
-- preserve explainability for course demonstration
-
----
-
-## Procedure Phase Handling
-
-A lightweight phase inference layer maps cue words to prototype phases:
-
-- `Positioning`
-- `Confirmation`
-- `Energy Delivery`
-- `Repositioning`
-- fallback: `Unknown`
-
-This field is intentionally approximate and included to make the output table visually similar to the slide concept.
-
----
-
-## Demo Without Real Audio
-
-A sample transcript fixture is included:
-
-- `ep_audio_monitor/sample_data/demo_segments.csv`
-
-Run demo classification directly (from project root, or after `pip install -e .`):
-
-```bash
-cd /path/to/ep_audio_monitor
+python -m ep_audio_monitor --audio /path/to/recording.wav --case-id CASE001 --output-dir outputs/
 python -m ep_audio_monitor.demo
 ```
 
-Demo output (default `outputs_demo/`):
-
-- `events.csv`
-- `all_segments.csv`
-- `events_review.xlsx`
+Empty or silent audio yields **no data rows**; CSV/Excel still contain **headers** (no crash).
 
 ---
 
-## Limitations
+## Classification
 
-- Rule-based NLP is intentionally simple and may miss nuanced context.
-- Transcript quality affects downstream classification quality.
-- No speaker diarization in v1.
-- No temporal merge of adjacent transcript segments in v1.
-- Phase inference is heuristic only.
-- Not validated for clinical use.
-
----
-
-## Future Improvements
-
-- Merge neighboring segments into composite local events
-- Add confidence calibration and richer evidence traces
-- Add optional reviewer feedback loop to refine dictionaries
-- Add domain-adapted phrase lexicons from labeled examples
-- Add optional trained classifier while preserving explainability
+- Editable terms: `ClassifierConfig.category_terms`  
+- Conservative: needs enough hit count and margin vs runner-up; otherwise `routine_none` → **`-`** in the log  
+- Routine descriptions use `routine_description_by_phase` (e.g. “Catheter positioned”, “PFA application”)
 
 ---
 
 ## Troubleshooting
 
-- **`No module named ep_audio_monitor`**: You ran Python from the **parent** folder (e.g. `Module 4 Code/`) instead of the **project root** (`Module 4 Code/ep_audio_monitor/`). Either `cd` into the project root and run again, or run `pip install -e .` from the project root (with your venv activated) so the package is on the interpreter path everywhere.
-- **`ffmpeg` not found**: install ffmpeg and ensure it is on `PATH`.
-- **Whisper model load failure**: try `--whisper-model tiny` first.
-- **Low/empty transcription**: verify audio clarity and language flag.
-- **No flagged events**: this may be expected under conservative thresholds; inspect `all_segments.csv` and adjust rules in `config.py`.
-
----
-
-## Interpretability and Human Review Notes
-
-- Every event is generated via explicit, editable rules.
-- `confidence` is a heuristic score, not a probability of truth.
-- `verified_label` and `review_notes` are included for human adjudication.
-- Final interpretation should remain with trained human reviewers.
+- **`No module named ep_audio_monitor`**: use project root + `pip install -e .`  
+- **Empty log body**: normal if transcription is empty or every segment is routine

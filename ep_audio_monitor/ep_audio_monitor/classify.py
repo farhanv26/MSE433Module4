@@ -1,11 +1,11 @@
-"""Rule-based workflow event classification."""
+"""Conservative rule-based classification (dictionary hits only)."""
 
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-from .config import ClassifierConfig, INTERNAL_TO_DISPLAY_LABEL, PhaseConfig
+from .config import ClassifierConfig, INTERNAL_TO_DISPLAY_LABEL, PhaseConfig, ROUTINE_DELAY_CATEGORY_DISPLAY
 
 CATEGORY_ORDER = [
     "positioning_coordination",
@@ -16,30 +16,22 @@ CATEGORY_ORDER = [
 
 
 def normalize_text(text: str) -> str:
-    text = text.lower()
+    text = (text or "").lower()
     text = re.sub(r"[^a-z0-9\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
 
-def _count_phrase_hits(text: str, phrases: List[str]) -> int:
-    return sum(1 for phrase in phrases if phrase in text)
+def _term_matches(clean_text: str, term: str) -> bool:
+    term = term.strip().lower()
+    if not term:
+        return False
+    if " " in term:
+        return term in clean_text
+    return bool(re.search(rf"\b{re.escape(term)}\b", clean_text))
 
 
-def _count_keyword_hits(text: str, keywords: List[str]) -> int:
-    return sum(1 for keyword in keywords if re.search(rf"\b{re.escape(keyword)}\b", text))
-
-
-def _score_category(clean_text: str, category: str, cfg: ClassifierConfig) -> Tuple[float, Dict[str, int]]:
-    phrase_hits = _count_phrase_hits(clean_text, cfg.phrases[category])
-    keyword_hits = _count_keyword_hits(clean_text, cfg.keywords[category])
-    weak_hits = _count_keyword_hits(clean_text, cfg.weak_keywords[category])
-    score = (
-        phrase_hits * cfg.phrase_weight
-        + keyword_hits * cfg.keyword_weight
-        + weak_hits * cfg.weak_keyword_weight
-    )
-    return score, {"phrase_hits": phrase_hits, "keyword_hits": keyword_hits, "weak_hits": weak_hits}
+def count_category_hits(clean_text: str, terms: List[str]) -> int:
+    return sum(1 for t in terms if _term_matches(clean_text, t))
 
 
 def infer_phase(transcript: str, phase_cfg: PhaseConfig) -> str:
@@ -50,67 +42,72 @@ def infer_phase(transcript: str, phase_cfg: PhaseConfig) -> str:
     return phase_cfg.default_phase
 
 
-def classify_segment(transcript: str, cfg: ClassifierConfig) -> Dict:
-    """Classify one segment with conservative decision rules."""
+def _flagged_description(category: str, clean: str, cfg: ClassifierConfig) -> str:
+    if category == "communication_delay":
+        if "angle" in clean or "catheter" in clean:
+            return "Repeated instructions for catheter angle"
+        return "Clarification of positioning instructions"
+    if category == "non_routine_complexity":
+        if "anatomy" in clean or "mapping" in clean:
+            return "Additional mapping due to anatomy"
+        if "closure" in clean or "verify" in clean or "verification" in clean:
+            return "Extra verification before closure"
+        return cfg.category_description[category]
+    return cfg.category_description[category]
+
+
+def classify_segment(transcript: str, cfg: ClassifierConfig, procedure_phase: str) -> Dict:
     clean = normalize_text(transcript)
-    scores: Dict[str, float] = {}
-    evidence: Dict[str, Dict[str, int]] = {}
+    if not clean:
+        return _routine_none(0.0, cfg, procedure_phase)
 
-    for category in CATEGORY_ORDER:
-        score, ev = _score_category(clean, category, cfg)
-        scores[category] = score
-        evidence[category] = ev
+    hits = {cat: count_category_hits(clean, cfg.category_terms[cat]) for cat in CATEGORY_ORDER}
+    best = max(hits, key=hits.get)
+    best_n = hits[best]
+    runner_up = sorted((v for k, v in hits.items() if k != best), reverse=True)
+    second_n = runner_up[0] if runner_up else 0
 
-    best_category = max(scores, key=scores.get)
-    best_score = scores[best_category]
-    sorted_scores = sorted(scores.values(), reverse=True)
-    second_score = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
-    margin = best_score - second_score
+    if best_n < cfg.min_hits or (best_n - second_n) < cfg.min_margin:
+        return _routine_none(min(0.45, 0.25 + best_n * 0.1), cfg, procedure_phase)
 
-    strong_enough = evidence[best_category]["phrase_hits"] >= 1 or (
-        evidence[best_category]["keyword_hits"] + evidence[best_category]["weak_hits"] >= 2
-    )
-
-    if (
-        best_score < cfg.min_score_threshold
-        or margin < cfg.min_margin_threshold
-        or not strong_enough
-    ):
-        return {
-            "internal_label": "routine_none",
-            "delay_category": "",
-            "confidence": round(min(0.55, best_score / max(cfg.min_score_threshold, 1.0)), 2),
-            "description": cfg.description_templates["routine_none"][0],
-            "scores": scores,
-            "evidence": evidence,
-        }
-
-    confidence = min(cfg.confidence_cap, 0.6 + 0.15 * best_score + 0.05 * margin)
-    desc = cfg.description_templates[best_category][0]
+    desc = _flagged_description(best, clean, cfg)
+    confidence = round(min(0.95, 0.52 + 0.12 * best_n + 0.05 * (best_n - second_n)), 2)
 
     return {
-        "internal_label": best_category,
-        "delay_category": INTERNAL_TO_DISPLAY_LABEL[best_category],
-        "confidence": round(confidence, 2),
+        "internal_label": best,
+        "delay_category": INTERNAL_TO_DISPLAY_LABEL[best],
         "description": desc,
-        "scores": scores,
-        "evidence": evidence,
+        "confidence": confidence,
+    }
+
+
+def _routine_none(confidence: float, cfg: ClassifierConfig, procedure_phase: str) -> Dict:
+    desc = cfg.routine_description_by_phase.get(
+        procedure_phase,
+        cfg.routine_description_by_phase["Unknown"],
+    )
+    return {
+        "internal_label": "routine_none",
+        "delay_category": ROUTINE_DELAY_CATEGORY_DISPLAY,
+        "description": desc,
+        "confidence": round(max(0.35, min(0.55, float(confidence))), 2),
     }
 
 
 def classify_segments(segments: List[Dict], cfg: ClassifierConfig, phase_cfg: PhaseConfig) -> List[Dict]:
-    """Classify all segments and add workflow fields."""
-    output: List[Dict] = []
+    out: List[Dict] = []
     for row in segments:
-        result = classify_segment(row.get("transcript", ""), cfg)
-        phase = infer_phase(row.get("transcript", ""), phase_cfg)
-        combined = {
-            **row,
-            "procedure_phase": phase,
-            "internal_label": result["internal_label"],
-            "delay_category": result["delay_category"],
-            "description": result["description"],
-            "confidence": result["confidence"],
-        }
-        output.append(combined)
-    return output
+        transcript = row.get("transcript") or ""
+        procedure_phase = infer_phase(transcript, phase_cfg)
+        result = classify_segment(transcript, cfg, procedure_phase)
+        out.append(
+            {
+                **row,
+                "procedure_phase": procedure_phase,
+                "internal_label": result["internal_label"],
+                "delay_category": result["delay_category"],
+                "description": result["description"],
+                "confidence": result["confidence"],
+            }
+        )
+    return out

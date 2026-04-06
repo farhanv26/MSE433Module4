@@ -1,7 +1,0 @@
-pandas
-numpy
-pydub
-librosa
-faster-whisper
-openpyxl
-scikit-learn
