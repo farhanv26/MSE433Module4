@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: ep-audio-monitor
+Version: 0.1.0
+Summary: Local prototype for EP lab procedural audio workflow monitoring (course project).
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: pydub
+Requires-Dist: librosa
+Requires-Dist: faster-whisper
+Requires-Dist: openpyxl
+Requires-Dist: scikit-learn
+
 # ep_audio_monitor
 
 `ep_audio_monitor` is a local Python prototype for course work on **AFib ablation workflow monitoring** in the EP lab.  
@@ -101,8 +115,7 @@ ep_audio_monitor/
 │  ├─ segment.py
 │  ├─ transcribe.py
 │  └─ sample_data/
-│     ├─ demo_segments.csv
-│     └─ sample_silence_2s.wav
+│     └─ demo_segments.csv
 ├─ requirements.txt
 ├─ pyproject.toml
 └─ README.md
@@ -178,13 +191,7 @@ cd /path/to/ep_audio_monitor
 python -m ep_audio_monitor --audio path/to/your_recording.wav --case-id CASE001 --output-dir outputs/
 ```
 
-Replace the audio path with a **real** file on your machine. Strings like `/path/to/your.wav` or `path/to/file.wav` in docs are **examples only**—they are not real files.
-
-Quick smoke test (from project root, after venv + `pip install -e .`):
-
-```bash
-python -m ep_audio_monitor --audio sample_data/sample_silence_2s.wav --case-id DEMO --output-dir outputs/
-```
+Replace `path/to/your_recording.wav` with a real file path. The placeholder `path/to/file.wav` is not a real file.
 
 Optional flags:
 
